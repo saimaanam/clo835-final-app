@@ -1,13 +1,17 @@
-FROM ubuntu:20.04
-RUN apt-get update -y
-COPY . /app
+FROM python:3.11-slim
+
+# Working directory inside container
 WORKDIR /app
-RUN set -xe \
-    && apt-get update -y \
-    && apt-get install -y python3-pip \
-    && apt-get install -y mysql-client 
-RUN pip install --upgrade pip
-RUN pip install -r requirements.txt
-EXPOSE 8080
-ENTRYPOINT [ "python3" ]
-CMD [ "app.py" ]
+
+# Install required Python libraries
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application code
+COPY . .
+
+# Expose port 81 (Flask app runs here)
+EXPOSE 81
+
+# Run the application
+CMD ["python3", "app.py"]
