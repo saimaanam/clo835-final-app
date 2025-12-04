@@ -1,0 +1,75 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-app
+  namespace: final
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: web-app
+  template:
+    metadata:
+      labels:
+        app: web-app
+    spec:
+      serviceAccountName: clo835          # 👈 use the required SA
+      containers:
+        - name: web-app
+          image: 767398033131.dkr.ecr.us-east-1.amazonaws.com/clo835-final-app:v2
+          ports:
+            - containerPort: 81      # 👈 match app.py / Dockerfile
+          env:
+            - name: DBHOST
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: DBHOST
+            - name: DBPORT
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: DBPORT
+            - name: DATABASE
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: DATABASE
+            - name: APP_COLOR
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: APP_COLOR
+            - name: BG_BUCKET_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: BG_BUCKET_NAME
+            - name: BG_OBJECT_KEY
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: BG_OBJECT_KEY
+            - name: NAME_HEADER
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: NAME_HEADER
+            - name: DBUSER
+              valueFrom:
+                secretKeyRef:
+                  name: db-secret
+                  key: DBUSER
+            - name: DBPWD
+              valueFrom:
+                secretKeyRef:
+                  name: db-secret
+                  key: DBPWD
+          
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "200m"
+              memory: "256Mi"

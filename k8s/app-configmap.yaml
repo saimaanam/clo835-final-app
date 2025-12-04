@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: final
+data:
+  DBHOST: "mysql"            
+  DBPORT: "3306"
+  DATABASE: "employees"
+  APP_COLOR: "lightgray"
+  BG_BUCKET_NAME: "clo835-project-group4-s3bucket"
+  BG_OBJECT_KEY: "aws.png"
+  NAME_HEADER: "Group2- Saima, Edra and Jay"
+

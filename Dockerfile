@@ -11,7 +11,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Expose port 81 (Flask app runs here)
-EXPOSE 81
+EXPOSE 8080
 
 # Run the application
 CMD ["python3", "app.py"]

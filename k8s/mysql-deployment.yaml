@@ -1,0 +1,63 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mysql
+  namespace: final
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mysql
+  template:
+    metadata:
+      labels:
+        app: mysql
+    spec:
+      # Clean the data dir ONLY on first use of the volume
+      initContainers:
+        - name: init-mysql-data
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              if [ ! -d /var/lib/mysql/mysql ]; then
+                echo "Fresh volume detected, cleaning lost+found..."
+                rm -rf /var/lib/mysql/*
+              else
+                echo "Existing MySQL data dir found, NOT wiping."
+              fi
+          volumeMounts:
+            - name: mysql-data
+              mountPath: /var/lib/mysql
+
+      containers:
+        - name: mysql
+          image: mysql:5.7
+          ports:
+            - containerPort: 3306
+          env:
+            - name: MYSQL_ROOT_PASSWORD
+              value: "rootpass"
+            - name: MYSQL_DATABASE
+              value: "employees"
+            - name: MYSQL_USER
+              value: "appuser"
+            - name: MYSQL_PASSWORD
+              value: "apppass"
+          volumeMounts:
+            - name: mysql-data
+              mountPath: /var/lib/mysql
+            - name: mysql-init
+              mountPath: /docker-entrypoint-initdb.d
+
+      volumes:
+        - name: mysql-data
+          persistentVolumeClaim:
+            claimName: mysql-pvc
+        - name: mysql-init
+          configMap:
+            name: mysql-init-script
+            items:
+              - key: mysql.sql
+                path: mysql.sql

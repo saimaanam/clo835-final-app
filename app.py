@@ -1,220 +1,175 @@
 from flask import Flask, render_template, request
-from pymysql import connections
 import os
 import random
 import argparse
-import logging
 import boto3
-import shutil
+from botocore.exceptions import ClientError, NoCredentialsError  # 👈 added NoCredentialsError
+import pymysql  # ✅ import the actual module
 
 app = Flask(__name__)
 
-# ---------- Logging ----------
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-# ---------- Database config from env ----------
-DBHOST = os.environ.get("DBHOST", "localhost")
-DBUSER = os.environ.get("DBUSER", "root")
-DBPWD = os.environ.get("DBPWD", "password")
-DATABASE = os.environ.get("DATABASE", "employees")
-DBPORT = int(os.environ.get("DBPORT", "3306"))
-
-# ---------- App config from env (will come from ConfigMap later) ----------
-COLOR_FROM_ENV = os.environ.get("APP_COLOR", "lime")
-
-# Background image info (from ConfigMap later)
-BG_BUCKET_NAME = os.environ.get("BG_BUCKET_NAME")        # e.g. "my-bg-bucket"
-BG_OBJECT_KEY = os.environ.get("BG_OBJECT_KEY")          # e.g. "background1.jpg"
-
-# Your name in header (from ConfigMap later)
-NAME_HEADER = os.environ.get("NAME_HEADER", "Saima Anam Syed")
-
-# Where we'll store the background image locally
-LOCAL_BG_PATH = "static/background.jpg"
-TMP_BG_PATH = "/tmp/background.jpg"
-
-# ---------- MySQL connection ----------
-db_conn = connections.Connection(
-    host=DBHOST,
-    port=DBPORT,
-    user=DBUSER,
-    password=DBPWD,
-    db=DATABASE
-)
-
-output = {}
-table = 'employee'
-
-# ---------- Color codes (still used for styling if needed) ----------
-color_codes = {
-    "red": "#e74c3c",
-    "green": "#16a085",
-    "blue": "#89CFF0",
-    "blue2": "#30336b",
-    "pink": "#f4c2c2",
-    "darkblue": "#130f40",
-    "lime": "#C1FF9C",
+# ---------- DB CONFIG ----------
+DB_CONFIG = {
+    # Prefer K8s/ConfigMap values first, then fall back to Docker-style ones, then defaults
+    "host": os.environ.get("DBHOST") or os.environ.get("MYSQL_HOST", "mysql"),
+    "user": os.environ.get("DBUSER") or os.environ.get("MYSQL_USER", "appuser"),
+    "password": os.environ.get("DBPWD") or os.environ.get("MYSQL_PASSWORD", "apppass"),
+    "db": os.environ.get("DATABASE") or os.environ.get("MYSQL_DB", "employees"),
+    # IMPORTANT: do NOT read MYSQL_PORT (K8s sets it to tcp://10.100.82.145:3306)
+    "port": int(os.environ.get("DBPORT", 3306)),
+    "cursorclass": pymysql.cursors.DictCursor,
+    "autocommit": True,
 }
 
-SUPPORTED_COLORS = ",".join(color_codes.keys())
-COLOR = random.choice(["red", "green", "blue", "blue2", "darkblue", "pink", "lime"])
 
 
-# ---------- S3 background download ----------
+def get_connection():
+    return pymysql.connect(**DB_CONFIG)
+
+
+# ---------- S3 BACKGROUND IMAGE (optional) ----------
+BG_BUCKET_NAME = os.environ.get("BG_BUCKET_NAME")
+# default key (if not set) is "background.jpg", but you can override with env
+BG_OBJECT_KEY = os.environ.get("BG_OBJECT_KEY", "background.jpg")
+NAME_HEADER = os.environ.get("NAME_HEADER", "Group2- Saima, Edra and Jay")
+
+
 def download_bg_if_needed():
-    """
-    Download background image from S3 to static/background.jpg
-    using BG_BUCKET_NAME and BG_OBJECT_KEY.
-    """
-    if not BG_BUCKET_NAME or not BG_OBJECT_KEY:
-        logger.warning("Background bucket or key not set. Skipping download.")
+    """Download background image from S3 to static/background.jpg (best effort)."""
+    if not BG_BUCKET_NAME:
+        app.logger.info("No BG_BUCKET_NAME set, skipping S3 download")
         return
 
-    logger.info(f"Background image URL: s3://{BG_BUCKET_NAME}/{BG_OBJECT_KEY}")
+    static_dir = os.path.join(app.root_path, "static")
+    os.makedirs(static_dir, exist_ok=True)
+    target_path = os.path.join(static_dir, "background.jpg")
+
+    s3 = boto3.client("s3")
+    app.logger.info("Background image URL: s3://%s/%s", BG_BUCKET_NAME, BG_OBJECT_KEY)
 
     try:
-        s3 = boto3.client("s3")
-        # Download to a temp path first
-        s3.download_file(BG_BUCKET_NAME, BG_OBJECT_KEY, TMP_BG_PATH)
-
-        # Ensure 'static' directory exists
-        os.makedirs(os.path.dirname(LOCAL_BG_PATH), exist_ok=True)
-        shutil.copyfile(TMP_BG_PATH, LOCAL_BG_PATH)
-
-        logger.info(f"Background image downloaded to {LOCAL_BG_PATH}")
-    except Exception as e:
-        logger.exception("Failed to download background image from S3")
+        s3.download_file(BG_BUCKET_NAME, BG_OBJECT_KEY, target_path)
+        app.logger.info("Downloaded background to %s", target_path)
+    except NoCredentialsError:
+        # 👇 new: don't crash the app if there are no AWS creds in the container
+        app.logger.warning(
+            "No AWS credentials available in container. Skipping S3 background download."
+        )
+    except ClientError as e:
+        app.logger.error("Failed to download background image from S3: %s", e)
 
 
-# Call once at startup
+# Run once on import so the file is ready before requests hit templates
 download_bg_if_needed()
 
 
-# ---------- Routes ----------
-@app.route("/", methods=['GET', 'POST'])
+def get_bg_color():
+    # fallback color if APP_COLOR / COLOR not set
+    return os.environ.get("COLOR") or os.environ.get("APP_COLOR", "lightgrey")
+
+
+# ---------- ROUTES ----------
+
+@app.route("/")
 def home():
     return render_template(
-        'addemp.html',
-        color=color_codes[COLOR],
-        name_header=NAME_HEADER
+        "addemp.html",
+        color=get_bg_color(),
+        name_header=NAME_HEADER,
     )
 
 
-@app.route("/about", methods=['GET', 'POST'])
+@app.route("/about")
 def about():
     return render_template(
-        'about.html',
-        color=color_codes[COLOR],
-        name_header=NAME_HEADER
+        "about.html",
+        color=get_bg_color(),
+        name=NAME_HEADER,
     )
 
 
-@app.route("/addemp", methods=['POST'])
-def AddEmp():
-    emp_id = request.form['emp_id']
-    first_name = request.form['first_name']
-    last_name = request.form['last_name']
-    primary_skill = request.form['primary_skill']
-    location = request.form['location']
+@app.route("/addemp", methods=["POST"])
+def addemp():
+    """Insert a new employee into the MySQL table."""
+    emp_id = request.form.get("emp_id")
+    first_name = request.form.get("first_name")
+    last_name = request.form.get("last_name")
+    primary_skill = request.form.get("primary_skill")
+    location = request.form.get("location")
 
-    insert_sql = "INSERT INTO employee VALUES (%s, %s, %s, %s, %s)"
-    cursor = db_conn.cursor()
+    # Basic sanity check
+    if not emp_id or not first_name or not last_name:
+        return "Missing required fields (emp_id, first_name, last_name)", 400
 
-    try:
-        cursor.execute(insert_sql, (emp_id, first_name, last_name, primary_skill, location))
-        db_conn.commit()
-        emp_name = first_name + " " + last_name
-    finally:
-        cursor.close()
-
-    print("all modification done...")
-    return render_template(
-        'addempoutput.html',
-        name=emp_name,
-        color=color_codes[COLOR],
-        name_header=NAME_HEADER
-    )
-
-
-@app.route("/getemp", methods=['GET', 'POST'])
-def GetEmp():
-    return render_template(
-        "getemp.html",
-        color=color_codes[COLOR],
-        name_header=NAME_HEADER
-    )
-
-
-@app.route("/fetchdata", methods=['GET', 'POST'])
-def FetchData():
-    emp_id = request.form['emp_id']
-
-    output = {}
-    select_sql = "SELECT emp_id, first_name, last_name, primary_skill, location FROM employee WHERE emp_id=%s"
-    cursor = db_conn.cursor()
-
-    try:
-        cursor.execute(select_sql, (emp_id))
-        result = cursor.fetchone()
-
-        if not result:
-            # Simple handling if not found
-            return render_template(
-                "getempoutput.html",
-                id="N/A",
-                fname="N/A",
-                lname="N/A",
-                interest="N/A",
-                location="N/A",
-                color=color_codes[COLOR],
-                name_header=NAME_HEADER
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO employee (emp_id, first_name, last_name, primary_skill, location)
+                VALUES (%s, %s, %s, %s, %s)
+                """,
+                (emp_id, first_name, last_name, primary_skill, location),
             )
 
-        output["emp_id"] = result[0]
-        output["first_name"] = result[1]
-        output["last_name"] = result[2]
-        output["primary_skills"] = result[3]
-        output["location"] = result[4]
+    full_name = f"{first_name} {last_name}"
+    return render_template(
+        "addempoutput.html",
+        color=get_bg_color(),
+        name=full_name,
+    )
 
-    except Exception as e:
-        print(e)
-    finally:
-        cursor.close()
+
+@app.route("/getemp", methods=["GET"])
+def getemp():
+    """Show the form to enter an employee ID."""
+    return render_template(
+        "getemp.html",
+        color=get_bg_color(),
+    )
+
+
+@app.route("/fetchdata", methods=["POST"])
+def fetchdata():
+    """Fetch employee info by ID and display it."""
+    emp_id = request.form.get("emp_id")
+
+    if not emp_id:
+        return "emp_id not provided", 400
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT emp_id, first_name, last_name, primary_skill, location
+                FROM employee
+                WHERE emp_id = %s
+                """,
+                (emp_id,),
+            )
+            row = cur.fetchone()
+
+    if not row:
+        # Employee not found – show a simple "not found" page using the same template
+        return render_template(
+            "getempoutput.html",
+            color=get_bg_color(),
+            id=emp_id,
+            fname="Not found",
+            lname="",
+            interest="",
+            location="",
+        )
 
     return render_template(
         "getempoutput.html",
-        id=output["emp_id"],
-        fname=output["first_name"],
-        lname=output["last_name"],
-        interest=output["primary_skills"],
-        location=output["location"],
-        color=color_codes[COLOR],
-        name_header=NAME_HEADER
+        color=get_bg_color(),
+        id=row["emp_id"],
+        fname=row["first_name"],
+        lname=row["last_name"],
+        interest=row["primary_skill"],
+        location=row["location"],
     )
 
 
-if __name__ == '__main__':
-    # Check for Command Line Parameters for color
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--color', required=False)
-    args = parser.parse_args()
-
-    if args.color:
-        print("Color from command line argument =" + args.color)
-        COLOR = args.color
-        if COLOR_FROM_ENV:
-            print("A color was set through environment variable -" + COLOR_FROM_ENV + ". However, color from command line argument takes precendence.")
-    elif COLOR_FROM_ENV:
-        print("No Command line argument. Color from environment variable =" + COLOR_FROM_ENV)
-        COLOR = COLOR_FROM_ENV
-    else:
-        print("No command line argument or environment variable. Picking a Random Color =" + COLOR)
-
-    # Check if input color is a supported one
-    if COLOR not in color_codes:
-        print("Color not supported. Received '" + COLOR + "' expected one of " + SUPPORTED_COLORS)
-        exit(1)
-
-    # IMPORTANT: Listen on port 81 (assignment requirement)
-    app.run(host='0.0.0.0', port=81, debug=True)
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=81, debug=True)
