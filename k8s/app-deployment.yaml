@@ -13,12 +13,12 @@ spec:
       labels:
         app: web-app
     spec:
-      serviceAccountName: clo835          # 👈 use the required SA
+      serviceAccountName: clo835         
       containers:
         - name: web-app
-          image: 767398033131.dkr.ecr.us-east-1.amazonaws.com/clo835-final-app:v2
+          image: 767398033131.dkr.ecr.us-east-1.amazonaws.com/clo835-final-app:latest
           ports:
-            - containerPort: 81      # 👈 match app.py / Dockerfile
+            - containerPort: 81      
           env:
             - name: DBHOST
               valueFrom:
